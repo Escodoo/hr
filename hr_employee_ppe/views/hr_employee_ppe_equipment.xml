@@ -9,7 +9,6 @@
             <form>
                 <sheet>
                     <group>
-                        <!-- <field name="name" invisible="1"/> -->
                         <field name="product_id" />
                         <field name="expirable" />
                     </group>

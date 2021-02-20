@@ -10,7 +10,7 @@
     "website": "https://github.com/oca/hr",
     "license": "AGPL-3",
     "category": "Human Resources",
-    "depends": ["hr", "mail"],
+    "depends": ["hr", "mail", "product"],
     "data": [
         "security/hr_security.xml",
         "security/hr_employee_ppe_equipment.xml",

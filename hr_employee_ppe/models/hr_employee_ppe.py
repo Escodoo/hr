@@ -30,20 +30,21 @@ class HrEmployeePPE(models.Model):
         help="Situations in which the employee should use this equipment.",
     )
     expire = fields.Boolean(
-        string="Expire", help="True if the PPE expires", default=True
+        string="Expire", help="True if the PPE expires", default=True,
     )
     certification = fields.Char(
         string="Certification Number", help="Certification Number"
     )
     status = fields.Selection(
         [("valid", "Valid"), ("expired", "Expired")],
-        default="valid",
+        compute="_compute_status",
+        store=True,
         readonly=True,
-        help="Certification Number",
+        help="PPE Status",
     )
 
     @api.onchange("ppe_id", "employee_id", "end_date", "start_date")
-    def verify_expiracy(self):
+    def _compute_status(self):
         if self.ppe_id and self.employee_id:
             self.name = self.ppe_id.product_id.name + _(" to ") + self.employee_id.name
 
