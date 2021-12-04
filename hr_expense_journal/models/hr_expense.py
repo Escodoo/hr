@@ -1,7 +1,7 @@
 # Copyright (C) 2021 Open Source Integrators
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-from odoo import fields, models
+from odoo import fields, models, api
 
 
 class HrExpense(models.Model):
@@ -9,8 +9,11 @@ class HrExpense(models.Model):
 
     payment_type_id = fields.Many2one("account.journal", string="Payment Journal")
 
-    def _create_sheet_from_expenses(self):
-        res = super()._create_sheet_from_expenses()
-        if self.payment_type_id:
-            res.update({"bank_journal_id": self.payment_type_id.id})
+    @api.multi
+    def action_submit_expenses(self):
+        res = super().action_submit_expenses()
+        if self[0].payment_type_id:
+            res['context'].update(
+                {'default_bank_journal_id': self[0].payment_type_id.id}
+            )
         return res
