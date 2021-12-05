@@ -41,14 +41,22 @@ class HrExpense(models.Model):
             )
         ]
         invoice_vals = {
+            'company_id': self.company_id.id,
             "type": "in_invoice",
             "reference": self.reference,
             "date_invoice": self.date,
             "invoice_line_ids": invoice_lines
         }
-        invoice = self.env["account.invoice"].with_context(
-            type="purchase"
-        ).create(invoice_vals)
+        invoice = self.env['account.invoice'].with_context(
+            force_company=self.company_id.id,
+        ).new(invoice_vals)
+        invoice_vals = invoice._convert_to_write(invoice._cache)
+        invoice_vals.update({
+            'name': 'draft',
+            'currency_id': self.currency_id.id,
+            'origin': self.name,
+        })
+        invoice = self.env['account.invoice'].create(invoice_vals)
         self.write(
             {
                 "invoice_id": invoice.id,
