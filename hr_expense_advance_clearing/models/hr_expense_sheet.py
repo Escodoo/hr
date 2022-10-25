@@ -4,7 +4,7 @@
 from odoo import api, models, fields, _
 from odoo.tools.safe_eval import safe_eval
 from odoo.tools import pycompat
-from odoo.exceptions import ValidationError
+from odoo.exceptions import UserError, ValidationError
 
 
 class HrExpenseSheet(models.Model):
@@ -110,3 +110,113 @@ class HrExpenseSheet(models.Model):
         context1['default_advance_sheet_id'] = self.id
         vals['context'] = context1
         return vals
+
+    def consolidate_open_advances(self):
+        if not len(self) > 1:
+            raise UserError(
+                _(
+                    "To consolidate it is necessary to select more than one down payment."
+                )
+            )
+        if any(rec.clearing_residual <= 0 for rec in self):
+            raise UserError(
+                _("You cannot consolidate advances that do not have a balance.")
+            )
+        if any(rec.state != "done" for rec in self):
+            raise UserError(_("You cannot consolidate advances that are not paid."))
+        if len(self.mapped("employee_id")) != 1:
+            raise UserError(
+                _(
+                    "You cannot consolidate advances from different employees. "
+                    "Please select only advances from the same employee."
+                )
+            )
+
+        if self.env['hr.expense.sheet'].search(
+            [
+                ('advance', '=', False),
+                ('state', '!=', 'done'),
+                ('advance_sheet_id', 'in', self.ids)
+            ]
+        ):
+            raise UserError(
+                _(
+                    "You cannot consolidate advances that are linked to an expense "
+                    "report that is open."
+                )
+            )
+
+        writeoff_lines = self.env["account.move.line"]
+        emp_advance = self.env.ref("hr_expense_advance_clearing." "product_emp_advance")
+
+        residual_value = 0
+        for advance in self:
+            for line in advance.sudo().account_move_id.line_ids:
+                if line.account_id == emp_advance.property_account_expense_id:
+                    residual_value += line.amount_residual
+                    writeoff_acc_id = self.env["account.account"].search(
+                        [("code", "=", line.counterpart)]
+                    )
+                    writeoff_journal_id = line.move_id.journal_id
+                    line.reconcile(
+                        writeoff_acc_id=writeoff_acc_id,
+                        writeoff_journal_id=writeoff_journal_id,
+                    )
+                    for matched_credit_id in line.matched_credit_ids:
+                        for (
+                            move_line
+                        ) in matched_credit_id.credit_move_id.move_id.line_ids:
+                            if (
+                                move_line.account_id.internal_type == "payable"
+                                and not move_line.reconciled
+                            ):
+                                writeoff_lines |= move_line
+
+        employee = advance.employee_id
+        if residual_value > 0:
+            expense_sheet = self.env["hr.expense.sheet"].create(
+                {
+                    "name": "Advance Expense",
+                    "employee_id": employee.id,
+                }
+            )
+            expense_line = self.env["hr.expense"].create(
+                {
+                    "name": "Advance Sheet",
+                    "employee_id": employee.id,
+                    "product_id": emp_advance.id,
+                    "unit_amount": residual_value,
+                    "sheet_id": expense_sheet.id,
+                    "advance": True,
+                }
+            )
+            expense_line._onchange_product_id()
+            expense_line.unit_amount = residual_value
+
+            # Submitted to Manager
+            expense_sheet.action_submit_sheet()
+            # Approve
+            expense_sheet.approve_expense_sheets()
+            # Create Expense Entries
+            expense_sheet.action_sheet_move_create()
+
+            aml = self.env["account.move.line"]
+            aml_to_reconcile = aml
+            aml_to_reconcile_debit = aml
+            aml_to_reconcile_credit = aml
+
+            for line in writeoff_lines + expense_sheet.account_move_id.line_ids:
+                if line.account_id.internal_type == "payable" and not line.reconciled:
+                    aml_to_reconcile |= line
+                    if line.credit > 0:
+                        aml_to_reconcile_credit |= line
+                    if line.debit > 0:
+                        aml_to_reconcile_debit |= line
+
+            aml._reconcile_lines(
+                aml_to_reconcile_debit,
+                aml_to_reconcile_credit,
+                "amount_residual_currency",
+            )
+            aml_to_reconcile.check_full_reconcile()
+            expense_sheet.set_to_paid()
